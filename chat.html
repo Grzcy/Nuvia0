@@ -377,14 +377,14 @@
         .video-wrap.audio-only{min-height:240px;display:flex;align-items:center;justify-content:center}
         .remote-video{width:100%;height:56vh;object-fit:cover;background:#000}
         .remote-avatar{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:160px;height:160px;border-radius:50%;border:2px solid var(--border-light);display:none;object-fit:cover}
-        .local-video{position:absolute;right:12px;bottom:12px;width:200px;height:120px;border-radius:12px;border:1px solid var(--border-light);object-fit:cover;background:#000}
+        .local-video{position:absolute;right:12px;bottom:12px;width:120px;height:200px;border-radius:12px;border:1px solid var(--border-light);object-fit:cover;background:#000}
         .incoming-actions{display:none;gap:12px;justify-content:center;padding:12px;border-top:1px solid var(--border-light)}
         .call-controls{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;border-top:1px solid var(--border-light)}
         .call-btn{min-width:44px;min-height:44px;border-radius:999px;border:1px solid var(--border-light);background:var(--input-background);color:var(--white);cursor:pointer;padding:8px 14px}
         .call-btn.accept{background:linear-gradient(90deg,#28a745,#34d399);color:#fff}
         .call-btn.decline{background:linear-gradient(90deg,#e11d48,#ef4444);color:#fff}
         .end-btn{min-width:52px;min-height:52px;border-radius:999px;border:none;background:linear-gradient(90deg,#e11d48,#ef4444);color:#fff;box-shadow:var(--button-shadow);cursor:pointer}
-        @media (max-width:640px){ .remote-video{height:48vh} .local-video{width:160px;height:96px} }
+        @media (max-width:640px){ .remote-video{height:48vh} .local-video{width:96px;height:160px} }
     </style>
     <div id="callModal" class="call-modal">
         <div class="call-window">
@@ -402,6 +402,7 @@
                 <button class="call-btn" id="muteBtn" title="Toggle microphone"><i class="fas fa-microphone"></i></button>
                 <button class="call-btn" id="cameraBtn" title="Toggle camera"><i class="fas fa-video"></i></button>
                 <button class="call-btn" id="switchCamBtn" title="Switch camera"><i class="fas fa-sync-alt"></i></button>
+                <button class="call-btn" id="recordBtn" title="Start recording"><i class="fas fa-circle"></i></button>
                 <button class="end-btn" id="endCallBtn" title="End call"><i class="fas fa-phone-slash"></i></button>
             </div>
         </div>
@@ -678,6 +679,7 @@ const cameraBtn = document.getElementById('cameraBtn');
 const switchCamBtn = document.getElementById('switchCamBtn');
 const videoCallBtn = document.getElementById('videoCallBtn');
 const voiceCallBtn = document.getElementById('voiceCallBtn');
+const recordBtn = document.getElementById('recordBtn');
 
 // Call state
 let isCaller = false;
@@ -691,6 +693,9 @@ let remoteMediaStream = null;
 let acceptInProgressDocId = null;
 let currentIncomingDoc = null;
 let videoFacingMode = 'user';
+let currentLocalStream = null;
+let mediaRecorderCall = null;
+let recordingChunks = [];
 
 // Controls wiring
 videoCallBtn?.addEventListener('click', () => {
@@ -711,6 +716,15 @@ cameraBtn?.addEventListener('click', () => {
     try{ const stream = localVideo?.srcObject; if (stream) stream.getVideoTracks().forEach(t => t.enabled = !t.enabled); }catch(_){}
 });
 switchCamBtn?.addEventListener('click', async () => { try{ await switchCamera(); }catch(_){ } });
+recordBtn?.addEventListener('click', async () => {
+    try{
+        if (!mediaRecorderCall || mediaRecorderCall.state === 'inactive') {
+            await startConversationRecording();
+        } else if (mediaRecorderCall.state === 'recording') {
+            await stopConversationRecording();
+        }
+    }catch(_){ }
+});
 
         async function showIncomingPrompt(docSnap){
             // Attach a per-call snapshot listener for ringing state to detect remote hangup even before acceptance
@@ -849,7 +863,7 @@ function startRingtone(){ try{ stopRingtone(); ringAudio = new Audio('https://cd
 function stopRingtone(){ try{ if (ringAudio){ ringAudio.pause(); ringAudio.currentTime = 0; ringAudio = null; } }catch(_){}}
 function startCallerRingtone(){ try{ stopCallerRingtone(); callerRingAudio = new Audio('https://cdn.builder.io/o/assets%2Fc5542eb63b564e86810556e73a332186%2F4cbef326171f4fa79b77b66a9b292c50?alt=media&token=1db90849-5140-4702-9888-f35fd41c9d51&apiKey=c5542eb63b564e86810556e73a332186'); callerRingAudio.loop = true; callerRingAudio.volume = 0.5; callerRingAudio.play().catch(()=>{}); }catch(_){}}
 function stopCallerRingtone(){ try{ if (callerRingAudio){ callerRingAudio.pause(); callerRingAudio.currentTime = 0; callerRingAudio = null; } }catch(_){}}
-async function switchCamera(){ try{ if(!pc) return; const oldStream = localVideo && localVideo.srcObject; const audioTracks = oldStream ? oldStream.getAudioTracks() : []; const next = (videoFacingMode === 'user') ? 'environment' : 'user'; let newStream = null; try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: next } }); }catch(e){ try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: { exact: next } } }); }catch(_){ newStream = await navigator.mediaDevices.getUserMedia({ video: true }); } } const newVideoTrack = newStream.getVideoTracks()[0]; const sender = pc.getSenders ? pc.getSenders().find(s => s.track && s.track.kind === 'video') : null; if(sender && newVideoTrack){ await sender.replaceTrack(newVideoTrack); } const combined = new MediaStream([newVideoTrack, ...audioTracks]); if(localVideo){ const prev = localVideo.srcObject; localVideo.srcObject = combined; try{ localVideo.play().catch(()=>{}); }catch(_){} try{ if(prev && prev.getVideoTracks) prev.getVideoTracks().forEach(t => t.stop()); }catch(_){} } videoFacingMode = next; }catch(e){} }
+async function switchCamera(){ try{ if(!pc) return; const oldStream = localVideo && localVideo.srcObject; const audioTracks = oldStream ? oldStream.getAudioTracks() : []; const next = (videoFacingMode === 'user') ? 'environment' : 'user'; let newStream = null; try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: next } }); }catch(e){ try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: { exact: next } } }); }catch(_){ newStream = await navigator.mediaDevices.getUserMedia({ video: true }); } } const newVideoTrack = newStream.getVideoTracks()[0]; const sender = pc.getSenders ? pc.getSenders().find(s => s.track && s.track.kind === 'video') : null; if(sender && newVideoTrack){ await sender.replaceTrack(newVideoTrack); } const combined = new MediaStream([newVideoTrack, ...audioTracks]); if(localVideo){ const prev = localVideo.srcObject; localVideo.srcObject = combined; try{ localVideo.play().catch(()=>{}); }catch(_){} try{ if(prev && prev.getVideoTracks) prev.getVideoTracks().forEach(t => t.stop()); }catch(_){} } currentLocalStream = combined; videoFacingMode = next; }catch(e){} }
 
 backBtn.onclick = () => history.back();
 
@@ -1096,6 +1110,7 @@ backBtn.onclick = () => history.back();
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                     video: isVideo ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: videoFacingMode } : false
                 });
+                currentLocalStream = stream;
                 startCallerRingtone();
                 try{ clearTimeout(ringTimeoutId); }catch(_){ }
                 ringTimeoutId = setTimeout(async ()=>{ try{ await handleMissedByCaller(); }catch(_){ } }, 60000);
@@ -1207,6 +1222,12 @@ backBtn.onclick = () => history.back();
                         try{
                             const docSnap = change.doc;
                             const d = docSnap.data() || {};
+                            const createdAtMs = d.createdAt?.toMillis ? d.createdAt.toMillis() : (typeof d.createdAt === 'number' ? d.createdAt : Date.now());
+                            const tooOld = (Date.now() - createdAtMs) > 60000;
+                            if (tooOld) {
+                                try { await updateDoc(docSnap.ref, { status: 'missed', missedAt: Date.now() }); } catch(_){ }
+                                continue;
+                            }
                             if (change.type === 'added' && !pc) {
                                 // Show accept/decline UI instead of auto-answer
                                 callDocRef = docSnap.ref;
@@ -1282,6 +1303,7 @@ backBtn.onclick = () => history.back();
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 video: desiredVideo ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: videoFacingMode } : false
             });
+                currentLocalStream = stream;
                 if (desiredVideo) {
                     localVideo.srcObject = stream;
                     try { localVideo.play().catch(()=>{}); } catch(_){}
@@ -1397,6 +1419,7 @@ backBtn.onclick = () => history.back();
             stopCallTimer();
             try { pc && pc.getSenders().forEach(s => s.track && s.track.stop()); } catch {}
             try { pc && pc.close(); } catch {}
+            try { if (mediaRecorderCall && mediaRecorderCall.state === 'recording') { await stopConversationRecording(); } } catch {}
             const endedAtMs = Date.now();
             const startedAtMs = callStartMs;
             const shouldLog = isCaller && typeof startedAtMs === 'number' && endedAtMs >= startedAtMs;
@@ -1406,6 +1429,7 @@ backBtn.onclick = () => history.back();
             try { unsubCalleeCand && unsubCalleeCand(); } catch {}
             try { if (remoteVideo) remoteVideo.srcObject = null; } catch {}
             try { if (localVideo && localVideo.srcObject) { localVideo.srcObject.getTracks().forEach(t => t.stop()); localVideo.srcObject = null; } } catch {}
+            currentLocalStream = null;
 
             if (callDocRef) {
                 try {
@@ -1676,6 +1700,47 @@ backBtn.onclick = () => history.back();
             } catch(_){}
         }
         window.addEventListener('hashchange', () => { __hashScrolled = false; scrollToMessageHashOnce(); });
+
+        async function startConversationRecording(){
+            try{
+                if (!remoteMediaStream && !(remoteVideo && remoteVideo.srcObject)) { alert('Wait for the call to connect before recording.'); return; }
+                const remoteStream = remoteMediaStream || (remoteVideo && remoteVideo.srcObject);
+                const localStream = currentLocalStream || (localVideo && localVideo.srcObject);
+                const remoteAudio = remoteStream ? remoteStream.getAudioTracks() : [];
+                const localAudio = localStream ? localStream.getAudioTracks() : [];
+                if ((!remoteAudio || remoteAudio.length === 0) && (!localAudio || localAudio.length === 0)) { alert('No audio tracks available to record.'); return; }
+                const ac = new (window.AudioContext || window.webkitAudioContext)();
+                const dest = ac.createMediaStreamDestination();
+                if (remoteAudio && remoteAudio.length){
+                    const rs = ac.createMediaStreamSource(new MediaStream([remoteAudio[0]]));
+                    rs.connect(dest);
+                }
+                if (localAudio && localAudio.length){
+                    const ls = ac.createMediaStreamSource(new MediaStream([localAudio[0]]));
+                    ls.connect(dest);
+                }
+                const mixStream = dest.stream;
+                const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+                recordingChunks = [];
+                mediaRecorderCall = new MediaRecorder(mixStream, { mimeType: mime });
+                mediaRecorderCall.ondataavailable = (e)=>{ if (e.data && e.data.size > 0) recordingChunks.push(e.data); };
+                mediaRecorderCall.onstop = async ()=>{
+                    try{
+                        const blob = new Blob(recordingChunks, { type: 'audio/webm' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        const ts = new Date().toISOString().replace(/[:.]/g,'-');
+                        a.href = url; a.download = `jchat-conversation-${ts}.webm`;
+                        document.body.appendChild(a); a.click(); a.remove();
+                        URL.revokeObjectURL(url);
+                    }catch(_){ }
+                    if (recordBtn){ recordBtn.title = 'Start recording'; recordBtn.innerHTML = '<i class="fas fa-circle"></i>'; }
+                };
+                mediaRecorderCall.start();
+                if (recordBtn){ recordBtn.title = 'Stop recording'; recordBtn.innerHTML = '<i class="fas fa-square"></i>'; }
+            }catch(e){ alert('Recording failed to start.'); }
+        }
+        async function stopConversationRecording(){ try{ if (mediaRecorderCall && mediaRecorderCall.state === 'recording') mediaRecorderCall.stop(); }catch(_){ } }
 
         function formatRelativeTime(tsMs) {
             if (!tsMs) return 'unknown';
