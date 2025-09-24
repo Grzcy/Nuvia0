@@ -378,6 +378,7 @@
         .remote-video{width:100%;height:56vh;object-fit:cover;background:#000}
         .remote-avatar{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:160px;height:160px;border-radius:50%;border:2px solid var(--border-light);display:none;object-fit:cover}
         .local-video{position:absolute;right:12px;bottom:12px;width:120px;height:200px;border-radius:12px;border:1px solid var(--border-light);object-fit:cover;background:#000}
+        .local-video.mirror-selfie{transform:scaleX(-1)}
         .incoming-actions{display:none;gap:12px;justify-content:center;padding:12px;border-top:1px solid var(--border-light)}
         .call-controls{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px;border-top:1px solid var(--border-light)}
         .call-btn{min-width:44px;min-height:44px;border-radius:999px;border:1px solid var(--border-light);background:var(--input-background);color:var(--white);cursor:pointer;padding:8px 14px}
@@ -696,6 +697,8 @@ let videoFacingMode = 'user';
 let currentLocalStream = null;
 let mediaRecorderCall = null;
 let recordingChunks = [];
+let isSwitchingCam = false;
+let lastUsedVideoDeviceId = null;
 
 // Controls wiring
 videoCallBtn?.addEventListener('click', () => {
@@ -863,7 +866,72 @@ function startRingtone(){ try{ stopRingtone(); ringAudio = new Audio('https://cd
 function stopRingtone(){ try{ if (ringAudio){ ringAudio.pause(); ringAudio.currentTime = 0; ringAudio = null; } }catch(_){}}
 function startCallerRingtone(){ try{ stopCallerRingtone(); callerRingAudio = new Audio('https://cdn.builder.io/o/assets%2Fc5542eb63b564e86810556e73a332186%2F4cbef326171f4fa79b77b66a9b292c50?alt=media&token=1db90849-5140-4702-9888-f35fd41c9d51&apiKey=c5542eb63b564e86810556e73a332186'); callerRingAudio.loop = true; callerRingAudio.volume = 0.5; callerRingAudio.play().catch(()=>{}); }catch(_){}}
 function stopCallerRingtone(){ try{ if (callerRingAudio){ callerRingAudio.pause(); callerRingAudio.currentTime = 0; callerRingAudio = null; } }catch(_){}}
-async function switchCamera(){ try{ if(!pc) return; const oldStream = localVideo && localVideo.srcObject; const audioTracks = oldStream ? oldStream.getAudioTracks() : []; const next = (videoFacingMode === 'user') ? 'environment' : 'user'; let newStream = null; try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: next } }); }catch(e){ try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: { exact: next } } }); }catch(_){ newStream = await navigator.mediaDevices.getUserMedia({ video: true }); } } const newVideoTrack = newStream.getVideoTracks()[0]; const sender = pc.getSenders ? pc.getSenders().find(s => s.track && s.track.kind === 'video') : null; if(sender && newVideoTrack){ await sender.replaceTrack(newVideoTrack); } const combined = new MediaStream([newVideoTrack, ...audioTracks]); if(localVideo){ const prev = localVideo.srcObject; localVideo.srcObject = combined; try{ localVideo.play().catch(()=>{}); }catch(_){} try{ if(prev && prev.getVideoTracks) prev.getVideoTracks().forEach(t => t.stop()); }catch(_){} } currentLocalStream = combined; videoFacingMode = next; }catch(e){} }
+async function switchCamera(){
+    if(isSwitchingCam) return;
+    isSwitchingCam = true;
+    try{
+        const btn = document.getElementById('switchCamBtn'); if (btn) btn.disabled = true;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { isSwitchingCam = false; if (btn) btn.disabled = false; return; }
+        const oldStream = (localVideo && localVideo.srcObject) || currentLocalStream || null;
+        const audioTracks = oldStream ? oldStream.getAudioTracks() : [];
+        const oldVideo = oldStream ? oldStream.getVideoTracks()[0] : null;
+        const oldEnabled = oldVideo ? oldVideo.enabled : true;
+        const nextFacing = (videoFacingMode === 'user') ? 'environment' : 'user';
+
+        let nextDeviceId = null;
+        try{
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const vids = devices.filter(d => d.kind === 'videoinput');
+            if (vids.length > 1){
+                const currentId = (lastUsedVideoDeviceId || (oldVideo && oldVideo.getSettings && oldVideo.getSettings().deviceId)) || null;
+                const index = vids.findIndex(d => d.deviceId === currentId);
+                const nextIndex = index >= 0 ? (index + 1) % vids.length : 1 % vids.length;
+                nextDeviceId = vids[nextIndex].deviceId;
+            }
+        }catch(_){ }
+
+        let constraints = { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 } };
+        if (nextDeviceId) { constraints = { ...constraints, deviceId: { exact: nextDeviceId } }; }
+        else { constraints = { ...constraints, facingMode: nextFacing }; }
+
+        let newStream = null;
+        try{ newStream = await navigator.mediaDevices.getUserMedia({ video: constraints }); }
+        catch(e){ try{ newStream = await navigator.mediaDevices.getUserMedia({ video: { width:{ ideal:640 }, height:{ ideal:480 }, frameRate:{ ideal:24, max:30 }, facingMode: { exact: nextFacing } } }); }
+            catch(_){ newStream = await navigator.mediaDevices.getUserMedia({ video: true }); } }
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        if (newVideoTrack) newVideoTrack.enabled = oldEnabled;
+
+        if (pc) {
+            const sender = pc.getSenders ? pc.getSenders().find(s => s.track && s.track.kind === 'video') : null;
+            if (sender && newVideoTrack) { await sender.replaceTrack(newVideoTrack); }
+            else if (newVideoTrack) { pc.addTrack(newVideoTrack, newStream); }
+        }
+
+        const combined = new MediaStream([newVideoTrack, ...audioTracks]);
+        if(localVideo){
+            const prev = localVideo.srcObject;
+            localVideo.srcObject = combined;
+            try{ localVideo.play().catch(()=>{}); }catch(_){ }
+            try{ if(prev && prev.getVideoTracks) prev.getVideoTracks().forEach(t => t.stop()); }catch(_){ }
+        }
+        currentLocalStream = combined;
+        try { lastUsedVideoDeviceId = (newVideoTrack && newVideoTrack.getSettings && newVideoTrack.getSettings().deviceId) || null; } catch(_){ }
+        videoFacingMode = nextFacing;
+        applyMirrorClassFromTrack(newVideoTrack);
+    }catch(_){
+    } finally {
+        isSwitchingCam = false; const btn = document.getElementById('switchCamBtn'); if (btn) btn.disabled = false;
+    }
+}
+function applyMirrorClassFromTrack(track){
+    try{
+        if (!localVideo) return;
+        let mode = videoFacingMode;
+        try{ const s = track && track.getSettings ? track.getSettings() : {}; if (s.facingMode) mode = s.facingMode; }catch(_){ }
+        if (mode === 'user') localVideo.classList.add('mirror-selfie'); else localVideo.classList.remove('mirror-selfie');
+    }catch(_){ }
+}
 
 backBtn.onclick = () => history.back();
 
@@ -1111,6 +1179,8 @@ backBtn.onclick = () => history.back();
                     video: isVideo ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: videoFacingMode } : false
                 });
                 currentLocalStream = stream;
+                try { lastUsedVideoDeviceId = (stream.getVideoTracks()[0]?.getSettings?.().deviceId) || null; } catch(_){ }
+                applyMirrorClassFromTrack(stream.getVideoTracks()[0]);
                 startCallerRingtone();
                 try{ clearTimeout(ringTimeoutId); }catch(_){ }
                 ringTimeoutId = setTimeout(async ()=>{ try{ await handleMissedByCaller(); }catch(_){ } }, 60000);
@@ -1141,7 +1211,7 @@ backBtn.onclick = () => history.back();
                     } catch (err) { console.warn('CALLER: ontrack handler error', err); }
                 };
                 // Add local tracks after ontrack handler is attached
-                stream.getTracks().forEach(t => pc.addTrack(t, stream));
+                { const sendStream = (localVideo && localVideo.srcObject) || stream; sendStream.getTracks().forEach(t => pc.addTrack(t, sendStream)); }
 
                 // Create call doc
                 const callsCol = collection(db, 'artifacts', appId, 'public', 'data', 'calls');
@@ -1304,6 +1374,8 @@ backBtn.onclick = () => history.back();
                 video: desiredVideo ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: videoFacingMode } : false
             });
                 currentLocalStream = stream;
+                try { lastUsedVideoDeviceId = (stream.getVideoTracks()[0]?.getSettings?.().deviceId) || null; } catch(_){ }
+                applyMirrorClassFromTrack(stream.getVideoTracks()[0]);
                 if (desiredVideo) {
                     localVideo.srcObject = stream;
                     try { localVideo.play().catch(()=>{}); } catch(_){}
@@ -1330,7 +1402,7 @@ backBtn.onclick = () => history.back();
                     } catch (err) { console.warn('CALLEE: ontrack handler error', err); }
                 };
                 // Add local tracks after ontrack handler
-                stream.getTracks().forEach(t => pc.addTrack(t, stream));
+                { const sendStream = (localVideo && localVideo.srcObject) || stream; sendStream.getTracks().forEach(t => pc.addTrack(t, sendStream)); }
                 const calleeCandCol = collection(callDocRef, 'calleeCandidates');
                 pc.onicecandidate = (e) => {
                     console.log('CALLEE: onicecandidate', e && e.candidate);
