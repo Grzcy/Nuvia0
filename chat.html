@@ -331,6 +331,7 @@ function applyPartnerData(data){
     partnerNameEl.textContent = partnerProfile.username || 'User';
     displayProfilePicture(partnerAvatar, null, partnerProfile.profilePicId, (partnerProfile.username||'U').charAt(0), 'w_120,h_120,c_fill,g_face,r_max');
     renderPartnerPresence();
+    try{ if(headerActionsEl) headerActionsEl.style.display = 'flex'; }catch(_){ }
   }catch(_){ }
 }
 
@@ -671,6 +672,7 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
         knownMessageIds = new Set(); allMessages = []; clearMessages();
         const bar = document.getElementById('pinnedBar'); if(bar){ bar.style.display='none'; const list=document.getElementById('pinnedList'); if(list) list.innerHTML=''; }
         partnerId = null; partnerProfile = null; chatId = null;
+        try{ if(headerActionsEl) headerActionsEl.style.display = 'none'; }catch(_){}
         // Restore friends list instantly
         try{ Array.from(document.querySelectorAll('.friend-item')).forEach(it=> it.style.display=''); }catch(_){ }
         try{ if(friendSearchInput) friendSearchInput.value=''; }catch(_){ }
