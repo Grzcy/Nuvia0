@@ -833,8 +833,10 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
 
         toggleViews(false);
         await ensureChatDoc(chatIdFor(currentUser.uid, partnerId), partnerId);
-        startListening(); startPresenceAutoRefresh(); startUserHeartbeat(currentUser);
+        startListening();
         loadMute();
+        await loadChatSettings();
+        startPresenceAutoRefresh(); startUserHeartbeat(currentUser);
       } else {
         // not signed in - redirect to login
         console.log('no user, redirect to login');
