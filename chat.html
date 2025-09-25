@@ -365,6 +365,7 @@ async function openChatWith(uid, hint){
     await ensureChatDoc(chatId, partnerId);
     startListening();
     loadMute();
+    await loadChatSettings();
     startPresenceAutoRefresh();
     startUserHeartbeat(currentUser);
   }catch(_){ }
