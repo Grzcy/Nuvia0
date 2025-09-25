@@ -418,6 +418,7 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
         chatMessages.style.display='flex';
         chatInputAreaEl.style.display='flex';
       }
+      try{ if(headerActionsEl) headerActionsEl.style.display = showFriends ? 'none' : 'flex'; }catch(_){ }
     }
 
     function renderFriendItem(f){
