@@ -356,6 +356,7 @@ async function openChatWith(uid, hint){
         else if(hint.profilePicId){ displayProfilePicture(partnerAvatar, null, hint.profilePicId, (hint.username||'U').charAt(0), 'w_120,h_120,c_fill,g_face,r_max'); }
         else { partnerAvatar.src = `https://placehold.co/80x80/CCCCCC/000000?text=${encodeURIComponent((hint.username||'U').charAt(0))}`; }
         renderPartnerPresence();
+        try{ if(headerActionsEl) headerActionsEl.style.display = 'flex'; }catch(_){ }
       }catch(_){ }
     }
 
