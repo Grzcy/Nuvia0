@@ -122,23 +122,8 @@
         <div class="partner-status" id="partnerStatus">Loading...</div>
       </div>
       <div class="header-actions" style="display:none">
-        <div class="chat-search" id="chatSearchWrap"><input id="chatSearchInput" type="search" placeholder="Search messages"></div>
-        <button id="searchToggleBtn" class="attach-btn" title="Search"><i class="fas fa-magnifying-glass"></i></button>
-        <button id="muteToggleBtn" class="attach-btn" title="Mute/unmute"><i class="fas fa-bell-slash"></i></button>
         <button id="callBtn" class="attach-btn" title="Voice call"><i class="fas fa-phone"></i></button>
         <button id="videoCallBtn" class="attach-btn" title="Video call"><i class="fas fa-video"></i></button>
-        <button id="readReceiptsToggleBtn" class="attach-btn" title="Toggle read receipts"><i class="fas fa-check-double"></i></button>
-        <div class="vanish-wrap" style="position:relative">
-          <button id="vanishBtn" class="attach-btn" title="Disappearing messages"><i class="fas fa-hourglass-half"></i></button>
-          <div id="vanishMenu" class="message-actions-menu" style="position:absolute;right:0;top:40px;display:none;">
-            <button data-value="0">Off</button>
-            <button data-value="60000">1 minute</button>
-            <button data-value="3600000">1 hour</button>
-            <button data-value="86400000">1 day</button>
-          </div>
-        </div>
-        <button id="headerMenuBtn" class="attach-btn" title="More"><i class="fas fa-ellipsis-vertical"></i></button>
-        <button id="viewProfileBtn" class="attach-btn" title="View profile"><i class="fas fa-user"></i></button>
       </div>
     </div>
     <div id="pinnedBar" class="pinned-bar"><div class="pinned-list" id="pinnedList"></div></div>
@@ -203,13 +188,9 @@
     try{ partnerAvatar.setAttribute('fetchpriority','high'); partnerAvatar.decoding='async'; partnerAvatar.loading='eager'; }catch(_){}
     const partnerNameEl = document.getElementById('partnerName');
     const partnerStatusEl = document.getElementById('partnerStatus');
-    const viewProfileBtn = document.getElementById('viewProfileBtn');
     const headerActionsEl = document.querySelector('.header-actions');
     const callBtn = document.getElementById('callBtn');
     const videoCallBtn = document.getElementById('videoCallBtn');
-    const readReceiptsToggleBtn = document.getElementById('readReceiptsToggleBtn');
-    const vanishBtn = document.getElementById('vanishBtn');
-    const vanishMenu = document.getElementById('vanishMenu');
 
     const chatMessages = document.getElementById('chatMessages');
     const messagesLoading = document.getElementById('messagesLoading');
@@ -269,9 +250,6 @@ function updateMessageDom(el, m){
     let replyContext = null;
     let knownMessageIds = new Set();
     let chatMuted = false;
-let readReceiptsEnabled = true;
-let disappearingMs = 0;
-let disappearingWatcher = null;
 let __partnerTyping = false;
 let __presenceTimer = null;
 
@@ -367,8 +345,6 @@ async function openChatWith(uid, hint){
 
     await ensureChatDoc(chatId, partnerId);
     startListening();
-    loadMute();
-    await loadChatSettings();
     startPresenceAutoRefresh();
     startUserHeartbeat(currentUser);
   }catch(_){ }
@@ -611,10 +587,8 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
               mutated = true;
               try{
                 if(d.receiverId === currentUser.uid && !d.seenAt){
-                  if(readReceiptsEnabled){
-                    const mref = doc(db,'artifacts',appId,'public','data','chats',chatId,'messages', d.id);
-                    await updateDoc(mref, { seenAt: serverTimestamp() });
-                  }
+                  const mref = doc(db,'artifacts',appId,'public','data','chats',chatId,'messages', d.id);
+                  await updateDoc(mref, { seenAt: serverTimestamp() });
                 }
                 if(d.senderId !== (currentUser&&currentUser.uid)) maybeNotify(d);
               }catch(_){ }
@@ -686,29 +660,12 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
       }catch(_){ toggleViews(true); }
     }
     backBtn.addEventListener('click', (e)=>{ e.preventDefault(); goBackToFriends(); });
-    viewProfileBtn.addEventListener('click', ()=>{ if(partnerId) window.location.href = `/profile.html?userId=${partnerId}`; });
 
-    // Search, mute, menu
-    const chatSearchWrap = document.getElementById('chatSearchWrap');
-    const chatSearchInput = document.getElementById('chatSearchInput');
-    const searchToggleBtn = document.getElementById('searchToggleBtn');
-    const muteToggleBtn = document.getElementById('muteToggleBtn');
-    const headerMenuBtn = document.getElementById('headerMenuBtn');
+    // Controls
     const replyBanner = document.getElementById('replyBanner');
     const replyText = document.getElementById('replyText');
     const replyCancelBtn = document.getElementById('replyCancelBtn');
     const notifSound = document.getElementById('notifSound');
-
-    searchToggleBtn.addEventListener('click', ()=>{ chatSearchWrap.style.display = chatSearchWrap.style.display==='block' ? 'none' : 'block'; if(chatSearchWrap.style.display==='block'){ chatSearchInput.focus(); } });
-    chatSearchInput.addEventListener('input', ()=> renderAllMessages(chatSearchInput.value.trim()));
-
-    function updateMuteUI(){ muteToggleBtn.innerHTML = chatMuted ? '<i class="fas fa-bell"></i>' : '<i class="fas fa-bell-slash"></i>'; }
-    function loadMute(){ try{ chatMuted = !!localStorage.getItem('mute_'+chatId); updateMuteUI(); }catch(_){ chatMuted=false; } }
-    muteToggleBtn.addEventListener('click', ()=>{ chatMuted = !chatMuted; try{ if(chatMuted) localStorage.setItem('mute_'+chatId,'1'); else localStorage.removeItem('mute_'+chatId); }catch(_){ } updateMuteUI(); showMessage(chatMuted? 'Muted':'Unmuted'); });
-
-    headerMenuBtn.addEventListener('click', async ()=>{
-      const choice = prompt('Type: block or report'); if(!choice) return; const v = choice.toLowerCase(); if(v==='block'){ await blockUser(); } else if(v==='report'){ await reportUser(); }
-    });
 
     replyCancelBtn.addEventListener('click', ()=> clearReply());
 
@@ -763,17 +720,6 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
     async function blockUser(){ try{ await setDoc(doc(db,'artifacts',appId,'users', currentUser.uid, 'blocks', partnerId), { blockedAt: serverTimestamp() }, { merge:true }); showMessage('User blocked'); }catch(_){ showMessage('Failed to block','error'); } }
     async function reportUser(){ try{ await addDoc(collection(db,'artifacts',appId,'public','data','reports'), { type:'chatAbuse', reporterId: currentUser.uid, reportedId: partnerId, at: serverTimestamp(), chatId }); showMessage('Reported'); }catch(_){ showMessage('Failed to report','error'); } }
 
-    // Read receipts per-chat
-    function updateReadReceiptsUI(){ try{ if(!readReceiptsToggleBtn) return; readReceiptsToggleBtn.title = readReceiptsEnabled ? 'Read receipts: ON' : 'Read receipts: OFF'; readReceiptsToggleBtn.innerHTML = readReceiptsEnabled ? '<i class="fas fa-check-double"></i>' : '<i class="fas fa-eye-slash"></i>'; }catch(_){ } }
-    function loadReadReceipts(){ try{ if(!chatId) return; const v = localStorage.getItem('readreceipt_'+chatId); readReceiptsEnabled = v !== '0'; updateReadReceiptsUI(); }catch(_){ readReceiptsEnabled = true; } }
-    function setReadReceipts(enabled){ try{ readReceiptsEnabled = !!enabled; if(!chatId) return; if(readReceiptsEnabled) localStorage.removeItem('readreceipt_'+chatId); else localStorage.setItem('readreceipt_'+chatId,'0'); updateReadReceiptsUI(); showMessage('Read receipts ' + (readReceiptsEnabled? 'enabled':'disabled')); }catch(_){ } }
-    if(readReceiptsToggleBtn){ readReceiptsToggleBtn.addEventListener('click', ()=> setReadReceipts(!readReceiptsEnabled)); }
-
-    // Disappearing messages (per chat)
-    async function setDisappearingDuration(ms){ try{ disappearingMs = Number(ms)||0; if(!chatId) return; const chatDocRef = doc(db,'artifacts',appId,'public','data','chats',chatId); await updateDoc(chatDocRef, { disappearingMs: disappearingMs }); startDisappearingWatcher(); showMessage(disappearingMs? ('Disappearing messages set to '+ (disappearingMs/1000)+'s') : 'Disappearing messages turned off'); }catch(e){ console.error('set disappearing',e); showMessage('Failed to set disappearing','error'); } }
-    function startDisappearingWatcher(){ try{ if(disappearingWatcher) clearInterval(disappearingWatcher); if(!disappearingMs || disappearingMs<=0) return; disappearingWatcher = setInterval(async ()=>{ try{ const now = Date.now(); for(const m of allMessages.slice()){ if(!m || m.deleted) continue; const ts = tsToMillis(m.timestamp); if(!ts) continue; if(now - ts > disappearingMs){ try{ const mref = doc(db,'artifacts',appId,'public','data','chats',chatId,'messages', m.id); await updateDoc(mref, { deleted: true, text: 'Message disappeared' }); }catch(_){ } } } }catch(_){ } }, 30000); }catch(_){ } }
-    async function loadDisappearingSetting(){ try{ if(!chatId) return; const chatDocRef = doc(db,'artifacts',appId,'public','data','chats',chatId); try{ const snap = await getDoc(chatDocRef); if(snap.exists()){ disappearingMs = snap.data()?.disappearingMs || 0; } }catch(_){ } try{ onSnapshot(chatDocRef, (snap)=>{ if(snap.exists()){ disappearingMs = snap.data()?.disappearingMs || 0; startDisappearingWatcher(); } }); }catch(_){ } startDisappearingWatcher(); }catch(_){ } }
-
     // Simple call signaling (creates call record) - lightweight
     async function startCall(type){ try{ if(!currentUser || !partnerId) return; const callsRef = collection(db,'artifacts',appId,'public','data','chats',chatId,'calls'); const cdoc = await addDoc(callsRef, { type, callerId: currentUser.uid, calleeId: partnerId, status: 'initiated', createdAt: serverTimestamp() }); showMessage('Call initiated'); // show a basic UI
         const cid = cdoc.id; const w = window.open('', '_blank', 'width=400,height=700'); if(w){ w.document.title = type + ' call'; w.document.body.style.background = '#0b0b12'; w.document.body.style.color = '#fff'; w.document.body.innerHTML = '<div style="padding:20px;font-family:Inter,sans-serif"><h2>'+ (type==='video'?'Video':'Voice') +' call</h2><p>Call id: '+ cid +'</p><p>Use your app to accept/handle the call.</p></div>'; }
@@ -781,12 +727,7 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
     if(callBtn) callBtn.addEventListener('click', ()=> startCall('voice'));
     if(videoCallBtn) videoCallBtn.addEventListener('click', ()=> startCall('video'));
 
-    // vanish menu handlers
-    if(vanishBtn && vanishMenu){ vanishBtn.addEventListener('click', ()=> vanishMenu.classList.toggle('open'));
-      Array.from(vanishMenu.querySelectorAll('button')).forEach(b=> b.addEventListener('click', ()=>{ const v = Number(b.dataset.value||'0'); vanishMenu.classList.remove('open'); setDisappearingDuration(v); })); }
 
-    // Load settings on chat open
-    async function loadChatSettings(){ try{ loadReadReceipts(); await loadDisappearingSetting(); }catch(_){ } }
 
     // Ensure settings are loaded whenever chat opens
     // call loadChatSettings() from openChatWith after partner load
@@ -839,8 +780,6 @@ window.addEventListener('beforeunload', ()=>{ try{ friendPresenceUnsubs.forEach(
         toggleViews(false);
         await ensureChatDoc(chatIdFor(currentUser.uid, partnerId), partnerId);
         startListening();
-        loadMute();
-        await loadChatSettings();
         startPresenceAutoRefresh(); startUserHeartbeat(currentUser);
       } else {
         // not signed in - redirect to login
