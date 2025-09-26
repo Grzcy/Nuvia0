@@ -232,6 +232,12 @@
         .friend-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--status-offline); box-shadow: none; }
         .friend-dot.online { background: var(--status-online); box-shadow: 0 0 8px rgba(76,175,80,0.7); }
 
+        .friends-search { position: relative; width: 100%; }
+        .friends-search-input { width: 100%; padding: 10px 12px 10px 36px; border-radius: 12px; border: 1px solid var(--border-light); background: var(--input-background); color: var(--white); outline: none; }
+        .friends-search-input::placeholder { color: var(--text-light); }
+        .friends-search-input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,213,255,0.15); }
+        .friends-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-light); pointer-events: none; }
+
         #messageBox { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); background-color: var(--card-background-color); color: var(--text-color-primary); padding: 10px 15px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 1000; display: none; opacity: 0; transition: opacity 0.3s ease-in-out, top 0.3s ease-in-out; min-width: 200px; max-width: 300px; text-align: center; display: flex; align-items: center; gap: 10px; }
         #messageBox.show { opacity: 1; display: flex; top: 60px; }
         #messageBox.success { background-color: rgba(0,213,255,0.15); border: 1px solid var(--blue); box-shadow: 0 4px 15px rgba(0,213,255,0.3); }
@@ -290,7 +296,10 @@
         <!-- Friends List View (shown when no partner selected) -->
         <section id="friendListView" class="friends-list-view" aria-label="Friends list">
             <div class="friends-list-header">
-                <h2 class="friends-list-title">Friends</h2>
+                <div class="friends-search">
+                    <i class="fas fa-search friends-search-icon" aria-hidden="true"></i>
+                    <input id="friendSearchInput" class="friends-search-input" type="search" placeholder="Search friends" aria-label="Search friends">
+                </div>
             </div>
             <div id="friendsList" class="friends-list">
                 <p id="friendsLoading" class="messages-loading-text" style="text-align:center;color:var(--text-light)">Loading friends...</p>
@@ -371,6 +380,9 @@
         const friendListView = document.getElementById('friendListView');
         const friendsList = document.getElementById('friendsList');
         const friendsLoading = document.getElementById('friendsLoading');
+
+        const friendSearchInput = document.getElementById('friendSearchInput');
+        let allFriendsData = [];
 
         const chatHeader = document.getElementById('chatHeader');
         const partnerProfilePic = document.getElementById('partnerProfilePic');
@@ -492,6 +504,20 @@
             subscribePresence(uid, dot);
             return item;
         }
+        function renderFriendsList(filterValue = '') {
+            const q = (filterValue || '').toLowerCase().trim();
+            friendsList.innerHTML = '';
+            clearPresenceListeners();
+            if (allFriendsData.length === 0) {
+                const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'No friends yet.'; friendsList.appendChild(p); return;
+            }
+            const matches = allFriendsData.filter(f => ((f.profile.username || `User_${f.uid.substring(0,8)}`).toLowerCase().includes(q)));
+            if (matches.length === 0) {
+                const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'No friends found.'; friendsList.appendChild(p); return;
+            }
+            matches.forEach(f => friendsList.appendChild(createFriendRow(f.uid, f.profile)));
+        }
+
         async function loadFriendsList() {
             if (!currentUser) return;
             friendsList.innerHTML = ''; friendsLoading.style.display = 'block'; clearPresenceListeners();
@@ -500,12 +526,19 @@
                 onSnapshot(friendsCol, async (snap)=>{
                     const friendUids = new Set();
                     snap.forEach(docSnap=>{ const d = docSnap.data(); if (d.user1Id === currentUser.uid) friendUids.add(d.user2Id); else if (d.user2Id === currentUser.uid) friendUids.add(d.user1Id); });
-                    friendsList.innerHTML = '';
-                    if (friendUids.size === 0) { const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'No friends yet.'; friendsList.appendChild(p); friendsLoading.style.display='none'; return; }
-                    const loads = Array.from(friendUids).map(async (uid)=>{ const uref = doc(db, 'artifacts', appId, 'public', 'data', 'users', uid); const usnap = await getDoc(uref).catch(()=>null); const pdata = usnap && usnap.exists() ? usnap.data() : { username: `User_${uid.substring(0,8)}` }; friendsList.appendChild(createFriendRow(uid, pdata)); });
-                    await Promise.all(loads); friendsLoading.style.display = 'none';
-                }, ()=>{ friendsList.innerHTML = ''; const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'Failed to load friends.'; friendsList.appendChild(p); friendsLoading.style.display = 'none'; });
-            } catch { friendsList.innerHTML = ''; const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'Failed to load friends.'; friendsList.appendChild(p); friendsLoading.style.display = 'none'; }
+                    allFriendsData = [];
+                    if (friendUids.size === 0) { friendsLoading.style.display='none'; renderFriendsList(friendSearchInput?.value || ''); return; }
+                    const loads = Array.from(friendUids).map(async (uid)=>{
+                        const uref = doc(db, 'artifacts', appId, 'public', 'data', 'users', uid);
+                        const usnap = await getDoc(uref).catch(()=>null);
+                        const pdata = usnap && usnap.exists() ? usnap.data() : { username: `User_${uid.substring(0,8)}` };
+                        allFriendsData.push({ uid, profile: pdata });
+                    });
+                    await Promise.all(loads);
+                    friendsLoading.style.display = 'none';
+                    renderFriendsList(friendSearchInput?.value || '');
+                }, ()=>{ allFriendsData = []; friendsList.innerHTML = ''; const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'Failed to load friends.'; friendsList.appendChild(p); friendsLoading.style.display = 'none'; });
+            } catch { allFriendsData = []; friendsList.innerHTML = ''; const p = document.createElement('p'); p.style.textAlign='center'; p.style.color='var(--text-light)'; p.textContent = 'Failed to load friends.'; friendsList.appendChild(p); friendsLoading.style.display = 'none'; }
         }
 
         // Chat logic
@@ -593,6 +626,7 @@
             messageInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
             backToUsersBtn.addEventListener('click', ()=>{ window.location.href = './find_friends.html'; });
             backToListBtn.addEventListener('click', backToList);
+            if (friendSearchInput) { friendSearchInput.addEventListener('input', (e)=>{ renderFriendsList(e.target.value); }); }
             bindInputAutoResize();
         }
 
